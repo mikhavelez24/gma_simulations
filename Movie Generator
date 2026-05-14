@@ -1,0 +1,153 @@
+import pandas as pd
+import numpy as np
+import random
+
+def generate_flexible_ph_thesis_master(num_scenes=50, movie_id=1,
+                                       max_days=None,
+                                       director_capacity=None,
+                                       heavy_weight=None,
+                                       light_weight=1,
+                                       main_chars=None):
+    """
+    Master Production Generator v5.0
+    Integrated Scene-Specific Vehicle logic, Fixed Stunt Packages, and Daily Prosthetics.
+    """
+
+    # --- 1. Parameter Initialization & Classification Logic ---
+    max_locations = 2
+    if max_days is None: max_days = random.randint(7, 15)
+    if director_capacity is None: director_capacity = random.randint(8, 18)
+    if heavy_weight is None: heavy_weight = round(random.uniform(1.5, 3.0), 1)
+    
+    movie_class = random.choices(['A', 'B', 'C'], weights=[20, 45, 35])[0]
+    if movie_class == 'A': heavy_prob = random.uniform(0.45, 1.0)
+    elif movie_class == 'B': heavy_prob = random.uniform(0.25, 0.45)
+    else: heavy_prob = random.uniform(0.0, 0.25)
+
+    if main_chars is None:
+        char_options = [["Char_1"], ["Char_1", "Char_2"], ["Char_1", "Char_2", "Char_3"], 
+                        ["Char_1", "Char_2", "Char_3", "Char_4"], ["Char_1", "Char_2", "Char_3", "Char_4", "Char_5"]]
+        main_chars = random.choice(char_options)
+
+    # --- 2. DYNAMIC LOCATION GROUPS ---
+    base_locs = [f"Loc_{chr(i)}" for i in range(65, 75)]
+    num_groups = random.randint(1, 4)
+    location_groups = {}
+    for g_idx in range(1, num_groups + 1):
+        location_groups[f"Group_{g_idx}"] = random.sample(base_locs, random.randint(3, 5))
+    all_possible_locations = list(set([loc for sublist in location_groups.values() for loc in sublist]))
+
+    # --- 3. Volatile Cost Libraries ---
+    actor_rates = {}
+    all_chars = [f"Char_{i}" for i in range(1, 15)]
+    for char in all_chars:
+        rate = random.randint(80000, 200000) if char in main_chars else random.randint(5000, 30000)
+        actor_rates[char] = int(np.ceil(rate / 100.0) * 100)
+
+    loc_rates = {l: int(np.ceil(random.randint(25000, 75000) / 100.0) * 100) for l in all_possible_locations}
+    
+    # REVISED STAFF LIBRARY: Costs and Types
+    staff_library = {
+        "SUV": {"cost": int(np.ceil(random.randint(8000, 12000) / 100.0) * 100), "specific": True},
+        "VAN": {"cost": int(np.ceil(random.randint(8000, 12000) / 100.0) * 100), "specific": True},
+        "PROSTHETICS": {"cost": int(np.ceil(random.randint(15000, 25000) / 100.0) * 100), "specific": True},
+        "STUNT TEAM PACKAGE": {"cost": int(np.ceil(random.randint(200000, 300000) / 50000.0) * 50000), "specific": False}
+    }
+    
+    # Overhead snapped to 50k
+    overhead_class = random.choices(['Low', 'Middle', 'High'], weights=[25, 45, 30])[0]
+    base_overhead_rate = {'Low': random.randint(150000, 250000), 'Middle': random.randint(250000, 350000), 'High': random.randint(350000, 500000)}[overhead_class]
+    fixed_overhead = (int(np.round(base_overhead_rate / 50000.0) * 50000)) * max_days
+    extra_rate = 1500
+
+    # --- 4. Generate One-Liner (With SUV/VAN Columns) ---
+    scenes = []
+    for i in range(1, num_scenes + 1):
+        num_talents = random.choice([0, 0, 10, 25, 50])
+        is_heavy = 1 if random.random() < heavy_prob else 0
+        
+        scene_data = {
+            "SEQ": i,
+            "TOD": random.choice(["Day", "Night"]),
+            "LOCATION": random.choice(all_possible_locations),
+            "DESCRIPTION": "Heavy/Complex" if is_heavy else "Dialogue"
+        }
+        for char in all_chars:
+            freq = 0.85 if char in main_chars else 0.15
+            scene_data[char] = char if random.random() < freq else ""
+
+        scene_data["TALENTS"] = num_talents
+        scene_data["STUNT"] = 1 if (is_heavy and random.random() < 0.3) else 0
+        scene_data["VFX"] = 1 if (is_heavy and random.random() < 0.2) else 0
+        # NEW COLUMNS: Vehicle requirements for the scene
+        scene_data["SUV"] = 1 if random.random() < 0.10 else 0
+        scene_data["VAN"] = 1 if random.random() < 0.10 else 0
+        scene_data["HEAVY?"] = is_heavy
+        scenes.append(scene_data)
+
+    oneliner_df = pd.DataFrame(scenes)
+
+    # --- 5. AD Clustering ---
+    ad_sorted = oneliner_df.sort_values(by=['LOCATION', 'TOD']).copy()
+    clusters, current_day, current_w, current_day_locs = [], 1, 0, []
+
+    def get_groups(loc): return [g for g, locs in location_groups.items() if loc in locs]
+
+    for _, row in ad_sorted.iterrows():
+        weight = heavy_weight if row['HEAVY?'] == 1 else light_weight
+        loc = row['LOCATION']
+        potential_groups = set(get_groups(loc))
+        if current_day_locs:
+            for existing_loc in current_day_locs:
+                potential_groups = potential_groups.intersection(set(get_groups(existing_loc)))
+        
+        if (current_w + weight > director_capacity) or (loc not in current_day_locs and len(current_day_locs) >= max_locations) or (len(potential_groups) == 0):
+            current_day += 1
+            current_w, current_day_locs = 0, []
+        
+        clusters.append(current_day)
+        current_w += weight
+        if loc not in current_day_locs: current_day_locs.append(loc)
+        
+    ad_sorted['AD_DAY'] = clusters
+
+    # --- 6. COST COMPUTATION (REVISED) ---
+    daily_variable_costs = []
+    for day in range(1, current_day + 1):
+        ds = ad_sorted[ad_sorted['AD_DAY'] == day]
+        if ds.empty: continue
+        
+        day_cast = sum([actor_rates[c] for c in all_chars if (ds[c].astype(str).str.len() > 0).any()])
+        day_loc = sum([loc_rates[l] for l in ds['LOCATION'].unique()])
+        day_extras = ds["TALENTS"].sum() * extra_rate
+        
+        # IN-SCENE SPECIFIC STAFF LOGIC
+        day_staff = 0
+        if ds["SUV"].any(): day_staff += staff_library["SUV"]["cost"]
+        if ds["VAN"].any(): day_staff += staff_library["VAN"]["cost"]
+        if ds["VFX"].any(): day_staff += staff_library["PROSTHETICS"]["cost"]
+        
+        daily_variable_costs.append(day_cast + day_loc + day_extras + day_staff)
+
+    total_variable = int(np.ceil(sum(daily_variable_costs) / 100.0) * 100)
+    # Stunt Team is now a Fixed Package
+    total_fixed = fixed_overhead + staff_library["STUNT TEAM PACKAGE"]["cost"]
+
+    # --- 7. Export ---
+    filename = f"movie_{movie_id}_master.xlsx"
+    param_list = [("MaxDays", max_days), ("DirectorCapacity", director_capacity), ("MainCharacter", ", ".join(main_chars)), ("HeavySceneWeight", heavy_weight), ("LightSceneWeight", light_weight)]
+    for group_name, locs in location_groups.items(): param_list.append((group_name, ", ".join(locs)))
+
+    with pd.ExcelWriter(filename) as writer:
+        pd.DataFrame(param_list, columns=["Parameter", "Input"]).to_excel(writer, sheet_name='Parameters', index=False)
+        oneliner_df.to_excel(writer, sheet_name='One-Liner', index=False)
+        pd.DataFrame({"Locations": list(loc_rates.keys()), "Cost": list(loc_rates.values())}).to_excel(writer, sheet_name='Budget', index=False, startcol=0)
+        pd.DataFrame({"Talents": list(actor_rates.keys()), "Cost": list(actor_rates.values())}).to_excel(writer, sheet_name='Budget', index=False, startcol=3)
+        pd.DataFrame({"Staff": list(staff_library.keys()), "Cost": [v["cost"] for v in staff_library.values()], "Only in Specific Days?": [v["specific"] for v in staff_library.values()]}).to_excel(writer, sheet_name='Budget', index=False, startcol=6)
+        ad_sorted.to_excel(writer, sheet_name='AD_Clustering', index=False)
+        pd.DataFrame({"Category": ["Total Variable Costs", "Total Fixed Costs", "GRAND TOTAL"], "Amount (PHP)": [total_variable, total_fixed, total_variable + total_fixed]}).to_excel(writer, sheet_name='Grand_Total_Summary', index=False)
+
+    print(f"Update Complete. Generated {movie_class} Class Movie with {overhead_class}-scale production: {filename}")
+
+# Run
+generate_flexible_ph_thesis_master(movie_id="PH_Final_Refined")
